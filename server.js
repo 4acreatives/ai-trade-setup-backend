@@ -28,10 +28,11 @@ app.post('/analyze', async (req, res) => {
       return res.status(400).json({ error: 'Invalid pair format.' });
     }
 
-    // Fetch 1H and 15M data from Twelve Data
+    // Fetch Daily, 1H and 15M data from Twelve Data (all free plan intervals)
     let ohlcvData = {};
-    ohlcvData['1H'] = await fetchOHLCV(pair, '1h');
-    ohlcvData['15M'] = await fetchOHLCV(pair, '15min');
+    ohlcvData['1D'] = await fetchOHLCV(pair, '1day');    // Daily timeframe (HTF)
+    ohlcvData['1H'] = await fetchOHLCV(pair, '1h');      // 1 Hour timeframe
+    ohlcvData['15M'] = await fetchOHLCV(pair, '15min');  // 15 Minute timeframe
 
     console.log('Fetched OHLCV data:', ohlcvData);
 
@@ -42,18 +43,18 @@ Act as a highly experienced institutional-level Forex technical analyst speciali
 Here's the data for analysis (OHLCV): ${JSON.stringify(ohlcvData)}
 
 Your analysis and recommendation should cover the following points in detail:
-Macro Market Structure & Higher Timeframe (HTF) Bias (1-Hour / 4-Hour):
+Macro Market Structure & Higher Timeframe (HTF) Bias (1-Day / 1-Hour):
 
 What is the prevailing trend? (Bullish, Bearish, Ranging)
 Identify key HTF support/resistance zones, supply/demand zones, and significant order blocks.
 Are there any major Fair Value Gaps (FVGs) or Imbalances that price is likely to react to or target?
 What is the overall directional bias you've established from the HTF?
-Intermediate Timeframe (30-Minute) Refinement:
+Intermediate Timeframe (15-Minute) Refinement:
 
-How does the 30-minute structure align with or deviate from the HTF bias?
+How does the 15-minute structure align with or deviate from the HTF bias?
 Identify any recent internal market structure shifts.
 Pinpoint closer-term liquidity pools (e.g., equal highs/lows, trendline liquidity).
-Execution Timeframe (15-Minute) Setup Identification:
+Execution Timeframe (Entry/Trigger):
 
 Liquidity Hunt/Sweep: Has there been a recent liquidity sweep (stop hunt) of a significant high or low? Describe the price action confirming this.
 Market Structure Shift (MSS) / Change of Character (ChOC): After the liquidity sweep, has there been a clear break of the immediate market structure indicating a potential short-term reversal or continuation aligning with the HTF bias? Detail the specific high/low that was broken.
