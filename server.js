@@ -20,6 +20,30 @@ async function fetchOHLCV(pair, interval = '1h') {
   return res.data;
 }
 
+// ========== Aggregate 1H to 4H ==========
+function aggregateTo4H(oneHourData) {
+  const values = oneHourData.values;
+  if (!values || values.length === 0) return { status: "error", values: [] };
+
+  // Sort oldest to newest
+  const sorted = [...values].sort((a, b) => new Date(a.datetime) - new Date(b.datetime));
+
+  let fourHourCandles = [];
+  for (let i = 0; i < sorted.length; i += 4) {
+    const group = sorted.slice(i, i + 4);
+    if (group.length < 4) continue; // Only use complete 4H blocks
+    fourHourCandles.push({
+      datetime: group[3].datetime, // end of 4h candle
+      open: group[0].open,
+      high: Math.max(...group.map(c => parseFloat(c.high))),
+      low: Math.min(...group.map(c => parseFloat(c.low))),
+      close: group[3].close,
+      volume: group.reduce((sum, c) => sum + parseFloat(c.volume || 0), 0),
+    });
+  }
+  return { status: "ok", values: fourHourCandles };
+}
+
 // ========== Analyze Endpoint ==========
 app.post('/analyze', async (req, res) => {
   try {
@@ -28,11 +52,13 @@ app.post('/analyze', async (req, res) => {
       return res.status(400).json({ error: 'Invalid pair format.' });
     }
 
-    // Fetch Daily, 1H and 15M data from Twelve Data (all free plan intervals)
+    // Fetch 1D, 1H, aggregate 4H, and 15M data from Twelve Data
     let ohlcvData = {};
-    ohlcvData['1D'] = await fetchOHLCV(pair, '1day');    // Daily timeframe (HTF)
-    ohlcvData['1H'] = await fetchOHLCV(pair, '1h');      // 1 Hour timeframe
-    ohlcvData['15M'] = await fetchOHLCV(pair, '15min');  // 15 Minute timeframe
+    ohlcvData['1D'] = await fetchOHLCV(pair, '1day');             // Daily
+    const oneHourData = await fetchOHLCV(pair, '1h');             // 1H
+    ohlcvData['1H'] = oneHourData;
+    ohlcvData['4H'] = aggregateTo4H(oneHourData);                 // Synth 4H from 1H
+    ohlcvData['15M'] = await fetchOHLCV(pair, '15min');           // 15M
 
     console.log('Fetched OHLCV data:', ohlcvData);
 
@@ -43,7 +69,7 @@ Act as a highly experienced institutional-level Forex technical analyst speciali
 Here's the data for analysis (OHLCV): ${JSON.stringify(ohlcvData)}
 
 Your analysis and recommendation should cover the following points in detail:
-Macro Market Structure & Higher Timeframe (HTF) Bias (1-Day / 1-Hour):
+Macro Market Structure & Higher Timeframe (HTF) Bias (1-Day / 4-Hour / 1-Hour):
 
 What is the prevailing trend? (Bullish, Bearish, Ranging)
 Identify key HTF support/resistance zones, supply/demand zones, and significant order blocks.
