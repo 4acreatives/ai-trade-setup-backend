@@ -65,10 +65,11 @@ Here's the data for analysis (OHLCV): ${JSON.stringify(ohlcvData)}
 [Now, use the rest of your detailed prompt here as previously constructed, including all the analysis points and requirements.]
     `;
 
-    const completion = await openai.chat.completions.create({
-  model: 'gpt-4o-2024-05-13',   // <== update here
+   const completion = await openai.chat.completions.create({
+  model: 'gpt-4o-2024-05-13', // Or 'gpt-4-turbo', or any model from your list!
   messages: [{ role: 'user', content: prompt }]
 });
+
 
 
     res.json({ setup: completion.choices[0].message.content });
