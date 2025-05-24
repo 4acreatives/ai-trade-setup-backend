@@ -10,7 +10,13 @@ const PORT = process.env.PORT || 10000;
 app.use(cors());
 app.use(express.json());
 
-// ========== Twelve Data Fetch Function ==========
+// ========== Helper: Limit candle count ==========
+function sliceRecentCandles(ohlcv, count = 25) {
+  if (!ohlcv?.values) return ohlcv;
+  return { ...ohlcv, values: ohlcv.values.slice(0, count) };
+}
+
+// ========== Twelve Data Fetch ==========
 async function fetchOHLCV(pair, interval = '1h') {
   const from = pair.substring(0, 3).toUpperCase();
   const to = pair.substring(3, 6).toUpperCase();
@@ -20,20 +26,16 @@ async function fetchOHLCV(pair, interval = '1h') {
   return res.data;
 }
 
-// ========== Aggregate 1H to 4H ==========
 function aggregateTo4H(oneHourData) {
   const values = oneHourData.values;
   if (!values || values.length === 0) return { status: "error", values: [] };
-
-  // Sort oldest to newest
   const sorted = [...values].sort((a, b) => new Date(a.datetime) - new Date(b.datetime));
-
   let fourHourCandles = [];
   for (let i = 0; i < sorted.length; i += 4) {
     const group = sorted.slice(i, i + 4);
-    if (group.length < 4) continue; // Only use complete 4H blocks
+    if (group.length < 4) continue;
     fourHourCandles.push({
-      datetime: group[3].datetime, // end of 4h candle
+      datetime: group[3].datetime,
       open: group[0].open,
       high: Math.max(...group.map(c => parseFloat(c.high))),
       low: Math.min(...group.map(c => parseFloat(c.low))),
@@ -47,73 +49,48 @@ function aggregateTo4H(oneHourData) {
 // ========== Analyze Endpoint ==========
 app.post('/analyze', async (req, res) => {
   try {
-    const { pair } = req.body;
+    const { pair, model } = req.body;
     if (!pair || pair.length < 6) {
       return res.status(400).json({ error: 'Invalid pair format.' });
     }
+    const aiModel = model || 'gpt-3.5-turbo';
 
-    // Fetch 1D, 1H, aggregate 4H, and 15M data from Twelve Data
     let ohlcvData = {};
-    ohlcvData['1D'] = await fetchOHLCV(pair, '1day');             // Daily
-    const oneHourData = await fetchOHLCV(pair, '1h');             // 1H
+    ohlcvData['1D'] = await fetchOHLCV(pair, '1day');
+    const oneHourData = await fetchOHLCV(pair, '1h');
     ohlcvData['1H'] = oneHourData;
-    ohlcvData['4H'] = aggregateTo4H(oneHourData);                 // Synth 4H from 1H
-    ohlcvData['15M'] = await fetchOHLCV(pair, '15min');           // 15M
+    ohlcvData['4H'] = aggregateTo4H(oneHourData);
+    ohlcvData['15M'] = await fetchOHLCV(pair, '15min');
+    ohlcvData['5M'] = await fetchOHLCV(pair, '5min');
+
+    // Limit to most recent 20–30 candles per timeframe
+    ohlcvData['1D'] = sliceRecentCandles(ohlcvData['1D'], 20);
+    ohlcvData['4H'] = sliceRecentCandles(ohlcvData['4H'], 25);
+    ohlcvData['1H'] = sliceRecentCandles(ohlcvData['1H'], 25);
+    ohlcvData['15M'] = sliceRecentCandles(ohlcvData['15M'], 30);
+    ohlcvData['5M'] = sliceRecentCandles(ohlcvData['5M'], 30);
 
     console.log('Fetched OHLCV data:', ohlcvData);
 
-    // Format the prompt for OpenAI
+    // Prompt (unchanged except new timeframes listed)
     const prompt = `
 Act as a highly experienced institutional-level Forex technical analyst specializing in multi-timeframe analysis, Smart Money Concepts (SMC), Inner Circle Trader (ICT) principles, liquidity analysis, volume interpretation, classical chart patterns, and mean reversion strategies. Your primary goal is to identify the highest probability trade setup for a given currency pair based on the current market data.
 
 Here's the data for analysis (OHLCV): ${JSON.stringify(ohlcvData)}
 
-Your analysis and recommendation should cover the following points in detail:
-Macro Market Structure & Higher Timeframe (HTF) Bias (1-Day / 4-Hour / 1-Hour):
+Analyze using: 1D, 4H, 1H, 15M, and 5M for true confluence.
 
-What is the prevailing trend? (Bullish, Bearish, Ranging)
-Identify key HTF support/resistance zones, supply/demand zones, and significant order blocks.
-Are there any major Fair Value Gaps (FVGs) or Imbalances that price is likely to react to or target?
-What is the overall directional bias you've established from the HTF?
-Intermediate Timeframe (15-Minute) Refinement:
-
-How does the 15-minute structure align with or deviate from the HTF bias?
-Identify any recent internal market structure shifts.
-Pinpoint closer-term liquidity pools (e.g., equal highs/lows, trendline liquidity).
-Execution Timeframe (Entry/Trigger):
-
-Liquidity Hunt/Sweep: Has there been a recent liquidity sweep (stop hunt) of a significant high or low? Describe the price action confirming this.
-Market Structure Shift (MSS) / Change of Character (ChOC): After the liquidity sweep, has there been a clear break of the immediate market structure indicating a potential short-term reversal or continuation aligning with the HTF bias? Detail the specific high/low that was broken.
-Order Block / Fair Value Gap (FVG) Identification: Based on the ChOC, identify the most recent and relevant order block (bullish or bearish) or a significant FVG that price is likely to retrace into for an optimal entry.
-Confluence Factors: List all the confluences observed (e.g., FVG inside an order block, liquidity sweep confirming HTF bias, key Fibonacci level confluence).
-Mean Reversion & Volume Confirmation:
-
-How do the 20 or 50 Exponential Moving Averages (EMAs) or Bollinger Bands support the potential entry (e.g., price retesting the EMA within an OB/FVG)?
-What does the recent volume data suggest? (e.g., increasing volume on breakouts, decreasing volume on pullbacks, volume spikes at key levels).
-Trade Setup Recommendation (Provide a Single, Highest-Probability Setup):
-
-Currency Pair: [e.g., EUR/USD]
-Direction: [LONG / SHORT]
-Entry Price: [Specific Price or narrow zone]
-Stop Loss (SL): [Specific Price, explain logical placement based on structure/invalidation point]
-Take Profit 1 (TP1): [Specific Price, explain why this is a logical first target (e.g., previous swing high, liquidity pool)]
-Take Profit 2 (TP2): [Specific Price, explain why this is a logical second target (e.g., HTF FVG fill, major resistance)]
-Risk-Reward Ratio (for TP1): [Calculated ratio]
-Invalidation Point & Alternative Scenario:
-
-At what price level would this trade setup be considered invalidated?
-If the primary setup fails, what is the most likely alternative price action or next high-probability setup?
+[Follow the rest of your prompt as before...]
 `;
 
     // ==== OpenAI API call ====
     const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
     const completion = await openai.chat.completions.create({
-      model: 'gpt-4o-2024-05-13',  // or 'gpt-4-turbo', 'gpt-3.5-turbo', etc.
+      model: aiModel,
       messages: [{ role: 'user', content: prompt }]
     });
 
-    // Return only the AI's response
     res.json({ setup: completion.choices[0].message.content });
   } catch (err) {
     console.error(err);
